@@ -19,9 +19,13 @@
 | 9 | [Phase 5 — Data Integration & Feature Engineering](#-phase-5--data-integration--feature-engineering) |
 | 10 | [Phase 6 — SQL Database & Analytical Queries](#-phase-6--sql-database--analytical-queries) |
 | 11 | [Phase 7 — Exploratory Data Analysis & Business Insights](#-phase-7--exploratory-data-analysis--business-insights) |
-| 12 | [Key Concepts Glossary](#-key-concepts-glossary) |
-| 13 | [Real-World Analogies](#-real-world-analogies) |
-| 14 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
+| 12 | [Phase 8 — Power Query (M) Pipeline Architecture](#-phase-8--power-query-m-pipeline-architecture) |
+| 13 | [Phase 9 — Power BI Star Schema Data Modeling](#-phase-9--power-bi-star-schema-data-modeling) |
+| 14 | [Phase 10 — Enterprise DAX Measure Engineering](#-phase-10--enterprise-dax-measure-engineering) |
+| 15 | [Phase 11 — Executive Control Tower Dashboard Architecture](#-phase-11--executive-control-tower-dashboard-architecture) |
+| 16 | [Key Concepts Glossary](#-key-concepts-glossary) |
+| 17 | [Real-World Analogies](#-real-world-analogies) |
+| 18 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
 
 ---
 
@@ -1632,6 +1636,162 @@ Think of Exploratory Data Analysis like a **Comprehensive Hospital Diagnostic & 
 
 **"What did the Haversine distance analysis reveal about logistics costs and SLA compliance?"**
 > "It revealed severe regional logistics friction across Brazil. Shipments exceeding 2,000 km experienced three times the delivery duration (21.8 days vs 7.2 days) and nearly four times the late delivery rate (19.5% vs 4.8%) compared to local shipments (0–100 km). This justifies regional fulfillment centers in the North and Northeast to reduce cross-state haul distances."
+
+---
+
+## ⚡ Phase 8 — Power Query (M) Pipeline Architecture
+
+**File Created:** [`power_bi/power_query_m_code.m`](../power_bi/power_query_m_code.m)  
+**Architecture:** 2-Tier Ingestion & Semantic Staging
+
+### What Did We Build?
+
+1. **Configurable Root Parameter (`FolderPath`):** Decouples file paths from hardcoded directories so the report can dynamically point to local machines, network drives, or Azure Data Lake Storage.
+2. **Staging Layer (`stg_*`):**
+   - Ingests raw data with explicit type casting (`datetime`, `Int64.Type`, `type number`, `type text`).
+   - Standardizes nulls and UTF-8 encodings.
+   - **Load is Disabled (`EnableLoad = False`)** to prevent duplicating data in memory.
+3. **Production Model Layer (`Fact*`, `Dim*`):**
+   - References staging queries, applies final analytical column projections, and loads into Power BI's VertiPaq engine.
+   - Creates distinct Role-Playing Geography dimensions: `DimCustomerGeography` and `DimSellerGeography`.
+
+---
+
+## 🧩 Phase 9 — Power BI Star Schema Data Modeling
+
+**Specification Document:** [`docs/power_bi_architecture.md`](../docs/power_bi_architecture.md)
+
+### Semantic Relationships & Cardinality
+
+```mermaid
+erDiagram
+    DimDate ||--o{ FactOrders : "date_key (1:* Active)"
+    DimDate ||--o{ FactOrderItems : "date_key (1:*)"
+    DimCustomer ||--o{ FactOrders : "customer_unique_id (1:*)"
+    DimProduct ||--o{ FactOrderItems : "product_id (1:*)"
+    DimSeller ||--o{ FactOrderItems : "seller_id (1:*)"
+    DimCustomerGeography ||--o{ DimCustomer : "customer_zip_code_prefix (1:1)"
+    DimSellerGeography ||--o{ DimSeller : "seller_zip_code_prefix (1:1)"
+    FactOrders ||--o{ FactOrderItems : "order_id (1:*)"
+    FactOrders ||--o{ FactPayments : "order_id (1:*)"
+    FactOrders ||--o{ FactReviews : "order_id (1:*)"
+```
+
+### Key Data Modeling Rules Applied
+- **Single-Direction Filtering:** Every dimension filters facts unidirectionally (1 $\rightarrow$ *). Bidirectional cross-filtering is strictly avoided to prevent relationship ambiguity and performance degradation.
+- **Role-Playing Dates:** `FactOrders` contains 5 date timestamps. The primary active relationship links to `order_purchase_timestamp`. Other date roles (approval, shipping, delivery, estimated delivery) are modeled as inactive relationships and activated dynamically in DAX via `USERELATIONSHIP()`.
+- **Conformed Role-Playing Dimensions:** Separate dimensions for Customer Geography and Seller Geography prevent circular loops and cartesian joins.
+
+---
+
+## 📐 Phase 10 — Enterprise DAX Measure Engineering
+
+**File Created:** [`power_bi/dax_measures.dax`](../power_bi/dax_measures.dax) (60+ Production Measures)
+
+### DAX Measure Categories & Patterns
+
+#### 1. Core Revenue & Order Fulfillment
+```dax
+Gross Merchandise Value (GMV) = SUM(FactOrders[gmv])
+
+On-Time Delivered Orders = 
+CALCULATE(
+    [Delivered Orders],
+    FactOrders[late_delivery_flag] = 0,
+    NOT ISBLANK(FactOrders[order_delivered_customer_date])
+)
+
+On-Time Delivery Rate % = DIVIDE([On-Time Delivered Orders], [Delivered Orders], 0)
+```
+
+#### 2. Customer CSAT & Net Promoter Score
+```dax
+Promoter Rate % = DIVIDE([Promoter Orders (5-Star)], [Reviewed Orders], 0)
+Detractor Rate % = DIVIDE([Detractor Orders (1-2 Star)], [Reviewed Orders], 0)
+Net CSAT Score = ([Promoter Rate %] - [Detractor Rate %]) * 100
+```
+
+#### 3. Time Intelligence & Moving Averages
+```dax
+GMV MoM Growth % = 
+VAR PrevGMV = CALCULATE([Gross Merchandise Value (GMV)], DATEADD(DimDate[full_date], -1, MONTH))
+RETURN
+    DIVIDE([Gross Merchandise Value (GMV)] - PrevGMV, PrevGMV, 0)
+
+GMV Rolling 3-Month Moving Average = 
+CALCULATE(
+    [Gross Merchandise Value (GMV)],
+    DATESINPERIOD(DimDate[full_date], MAX(DimDate[full_date]), -3, MONTH)
+) / 3
+```
+
+#### 4. Seller Pareto 80/20 Cumulative Calculation
+```dax
+Seller Cumulative GMV % = 
+VAR CurrentSellerGMV = [Gross Merchandise Value (GMV)]
+VAR TotalPlatformGMV = CALCULATE([Gross Merchandise Value (GMV)], ALLSELECTED(DimSeller))
+VAR CumulativeSum = 
+    CALCULATE(
+        [Gross Merchandise Value (GMV)],
+        FILTER(
+            ALLSELECTED(DimSeller),
+            [Gross Merchandise Value (GMV)] >= CurrentSellerGMV
+        )
+    )
+RETURN
+    DIVIDE(CumulativeSum, TotalPlatformGMV, 0)
+```
+
+---
+
+## 🖥️ Phase 11 — Executive Control Tower Dashboard Architecture
+
+### 5 Dedicated Production Report Pages
+
+1. **Page 1: Executive Overview Control Tower**
+   - Top KPI Ribbon: GMV (R$ 13.59M), Total Orders (99.4K), On-Time Rate (91.9%), CSAT (4.09★).
+   - Monthly GMV Trajectory & Order Volume Dual-Axis Trend.
+   - Brazil State Revenue Heatmap & Top 10 Categories Bar Chart.
+2. **Page 2: Delivery & Logistics SLA Control Tower**
+   - Delivery Variance (Promised vs Actual Bell Curve).
+   - Duration Breakdown: Seller Handling (2.8d) vs Carrier Transit (9.3d).
+   - Delay Severity Bands vs Volume (Early, 1–3d, 4–7d, 8d+).
+   - Regional Destination State SLA Matrix.
+3. **Page 3: Customer Experience (CSAT) Deep-Dive**
+   - The CSAT Delay Degradation Curve (Delay Days vs Star Rating).
+   - Review Score Breakdown (Promoters vs Detractors).
+   - High-Value VIP Detractor Orders Action Table.
+4. **Page 4: Seller Strategic Performance & 4-Quadrant Matrix**
+   - 4-Quadrant Scatter Plot (GMV Log Scale vs CSAT).
+   - Star Performers vs Operational Risk Quadrant (High GMV / Low CSAT).
+   - Master Seller Scorecard & Late Delivery Penalties.
+5. **Page 5: Geospatial & Freight Intelligence**
+   - Haversine Distance Band Performance (0–100km to 2000km+).
+   - Freight-to-Price Friction Ratio by Product Category.
+   - Interstate Origin-to-Destination Trade Flow Matrix.
+
+---
+
+### Real-World Analogy for Phases 8–11
+
+Think of Power BI and DAX like an **Interactive Formula 1 Racing Telemetry Cockpit**:
+- **Power Query (M):** The fuel filters, intake manifolds, and sensor pipelines cleaning and delivering high-grade telemetry data to the engine.
+- **Star Schema:** The structured chassis connecting engine cylinders (facts) to tires, steering, and suspension (dimensions).
+- **DAX Measures:** The digital speedometer, lap-time delta computer, and fuel efficiency calculator evaluating speeds in real-time based on the current track sector (filter context).
+- **Dashboard UI:** The driver's Heads-Up Display (HUD) warning of engine overheating (late delivery spikes in Quadrant 2 sellers) before the car crashes.
+
+---
+
+### Interview Answers — Phases 8–11
+
+**"How do you handle Role-Playing Date dimensions in Power BI?"**
+> "In an e-commerce order fact table, an order has multiple lifecycle dates: purchase date, approval date, carrier handoff date, and delivery date. Rather than creating 4 identical physical date tables which bloats model size, I keep a single conformed `DimDate` table with one active relationship on `order_purchase_timestamp`. For lifecycle duration metrics (e.g. delivered orders by delivery month), I use inactive relationships activated dynamically in DAX using `USERELATIONSHIP(FactOrders[delivery_date_key], DimDate[date_key])`."
+
+**"Why is single-direction filtering preferred over bidirectional relationships in enterprise Star Schemas?"**
+> "Bidirectional filtering can create ambiguous relationship paths, cyclic dependencies, and unexpected filter propagation that degrades calculation performance and causes inaccurate metric aggregations. By enforcing single-direction 1-to-many filtering, we ensure deterministic evaluation paths, optimize VertiPaq memory scans, and use explicit DAX patterns (`CROSSFILTER` or `CALCULATETABLE`) only when specifically required."
+
+**"What is the difference between Row Context and Filter Context in DAX?"**
+> "Row context exists during row-by-row iteration (such as in calculated columns or iterator functions like `SUMX` and `FILTER`), evaluating expressions based on the current row. Filter context is the total set of active filters applied to the data model originating from visual slices, page filters, matrix row/column headers, and `CALCULATE()` modifiers. `CALCULATE()` is the only function in DAX that can transform row context into filter context (context transition) and overwrite existing filter contexts."
 
 ---
 

@@ -1,0 +1,298 @@
+// ==============================================================================
+// ENTERPRISE E-COMMERCE CONTROL TOWER — DAX MEASURE LIBRARY (60+ MEASURES)
+// Master Analytical Measures for Power BI Desktop
+// ==============================================================================
+
+// ==============================================================================
+// 1. EXECUTIVE & REVENUE MEASURES
+// ==============================================================================
+
+Total Orders = 
+DISTINCTCOUNT(FactOrders[order_id])
+
+Delivered Orders = 
+CALCULATE(
+    [Total Orders],
+    FactOrders[order_status] = "delivered"
+)
+
+Cancelled Orders = 
+CALCULATE(
+    [Total Orders],
+    FactOrders[order_status] = "canceled"
+)
+
+Gross Merchandise Value (GMV) = 
+SUM(FactOrders[gmv])
+
+Total Freight Value = 
+SUM(FactOrders[freight_value])
+
+Total Gross Order Value = 
+SUM(FactOrders[total_order_value])
+
+Average Order Value (AOV) = 
+DIVIDE([Gross Merchandise Value (GMV)], [Total Orders], 0)
+
+Items Sold = 
+COUNTROWS(FactOrderItems)
+
+Average Items Per Order = 
+DIVIDE([Items Sold], [Total Orders], 0)
+
+Order Completion Rate = 
+DIVIDE([Delivered Orders], [Total Orders], 0)
+
+Order Cancellation Rate = 
+DIVIDE([Cancelled Orders], [Total Orders], 0)
+
+// ==============================================================================
+// 2. DELIVERY SLA & OPERATIONAL LOGISTICS MEASURES
+// ==============================================================================
+
+On-Time Delivered Orders = 
+CALCULATE(
+    [Delivered Orders],
+    FactOrders[late_delivery_flag] = 0,
+    NOT ISBLANK(FactOrders[order_delivered_customer_date])
+)
+
+Late Delivered Orders = 
+CALCULATE(
+    [Delivered Orders],
+    FactOrders[late_delivery_flag] = 1,
+    NOT ISBLANK(FactOrders[order_delivered_customer_date])
+)
+
+Severe Delayed Orders (>7 Days) = 
+CALCULATE(
+    [Delivered Orders],
+    FactOrders[severe_delay_flag] = 1
+)
+
+On-Time Delivery Rate % = 
+DIVIDE([On-Time Delivered Orders], [Delivered Orders], 0)
+
+Late Delivery Rate % = 
+DIVIDE([Late Delivered Orders], [Delivered Orders], 0)
+
+Severe Delay Rate % = 
+DIVIDE([Severe Delayed Orders (>7 Days)], [Delivered Orders], 0)
+
+Average Delivery Days = 
+AVERAGE(FactOrders[delivery_days])
+
+Average Delay Days = 
+AVERAGE(FactOrders[delay_days])
+
+Average Handling Days = 
+AVERAGE(FactOrders[handling_days])
+
+Average Transit Days = 
+AVERAGE(FactOrders[transit_days])
+
+Average Promised SLA Days = 
+AVERAGE(FactOrders[shipping_sla_days])
+
+Delivery SLA Variance (Days) = 
+[Average Promised SLA Days] - [Average Delivery Days]
+
+// ==============================================================================
+// 3. CUSTOMER EXPERIENCE & CSAT (REVIEW) MEASURES
+// ==============================================================================
+
+Total Reviews = 
+COUNTROWS(FactReviews)
+
+Reviewed Orders = 
+CALCULATE(
+    [Total Orders],
+    NOT ISBLANK(FactOrders[review_score_avg])
+)
+
+Review Coverage Rate % = 
+DIVIDE([Reviewed Orders], [Total Orders], 0)
+
+Average Review Score (CSAT) = 
+AVERAGE(FactOrders[review_score_avg])
+
+Promoter Orders (5-Star) = 
+CALCULATE(
+    [Reviewed Orders],
+    FactOrders[high_review_flag] = 1
+)
+
+Detractor Orders (1-2 Star) = 
+CALCULATE(
+    [Reviewed Orders],
+    FactOrders[low_review_flag] = 1
+)
+
+Neutral Orders (3-Star) = 
+CALCULATE(
+    [Reviewed Orders],
+    FactOrders[review_score_avg] = 3
+)
+
+Promoter Rate % = 
+DIVIDE([Promoter Orders (5-Star)], [Reviewed Orders], 0)
+
+Detractor Rate % = 
+DIVIDE([Detractor Orders (1-2 Star)], [Reviewed Orders], 0)
+
+Net CSAT Score (NPS Proxy) = 
+([Promoter Rate %] - [Detractor Rate %]) * 100
+
+// ==============================================================================
+// 4. TIME INTELLIGENCE & TRAJECTORY MEASURES
+// ==============================================================================
+
+GMV Prior Month = 
+CALCULATE(
+    [Gross Merchandise Value (GMV)],
+    DATEADD(DimDate[full_date], -1, MONTH)
+)
+
+GMV MoM Growth % = 
+DIVIDE([Gross Merchandise Value (GMV)] - [GMV Prior Month], [GMV Prior Month], 0)
+
+GMV Same Period Last Year = 
+CALCULATE(
+    [Gross Merchandise Value (GMV)],
+    SAMEPERIODLASTYEAR(DimDate[full_date])
+)
+
+GMV YoY Growth % = 
+DIVIDE([Gross Merchandise Value (GMV)] - [GMV Same Period Last Year], [GMV Same Period Last Year], 0)
+
+GMV Year-to-Date (YTD) = 
+TOTALYTD([Gross Merchandise Value (GMV)], DimDate[full_date])
+
+Orders Year-to-Date (YTD) = 
+TOTALYTD([Total Orders], DimDate[full_date])
+
+GMV Rolling 3-Month Moving Average = 
+CALCULATE(
+    [Gross Merchandise Value (GMV)],
+    DATESINPERIOD(DimDate[full_date], MAX(DimDate[full_date]), -3, MONTH)
+) / 3
+
+Orders Rolling 3-Month Moving Average = 
+CALCULATE(
+    [Total Orders],
+    DATESINPERIOD(DimDate[full_date], MAX(DimDate[full_date]), -3, MONTH)
+) / 3
+
+// ==============================================================================
+// 5. SELLER & CATEGORY PERFORMANCE MEASURES
+// ==============================================================================
+
+Active Sellers Count = 
+DISTINCTCOUNT(FactOrderItems[seller_id])
+
+Active Products Count = 
+DISTINCTCOUNT(FactOrderItems[product_id])
+
+Active Categories Count = 
+DISTINCTCOUNT(FactOrderItems[product_category_name_english])
+
+Average GMV Per Active Seller = 
+DIVIDE([Gross Merchandise Value (GMV)], [Active Sellers Count], 0)
+
+Seller Cumulative GMV % = 
+VAR CurrentSellerGMV = [Gross Merchandise Value (GMV)]
+VAR TotalPlatformGMV = CALCULATE([Gross Merchandise Value (GMV)], ALLSELECTED(DimSeller))
+VAR CumulativeSum = 
+    CALCULATE(
+        [Gross Merchandise Value (GMV)],
+        FILTER(
+            ALLSELECTED(DimSeller),
+            [Gross Merchandise Value (GMV)] >= CurrentSellerGMV
+        )
+    )
+RETURN
+    DIVIDE(CumulativeSum, TotalPlatformGMV, 0)
+
+Category Freight Friction % = 
+DIVIDE(SUM(FactOrderItems[freight_value]), SUM(FactOrderItems[price]), 0)
+
+// ==============================================================================
+// 6. GEOSPATIAL & DISTANCE BAND MEASURES
+// ==============================================================================
+
+Average Shipping Distance (KM) = 
+AVERAGE(FactOrderItems[distance_km])
+
+Interstate Shipment Count = 
+CALCULATE(
+    COUNTROWS(FactOrderItems),
+    FactOrderItems[interstate_flag] = 1
+)
+
+Interstate Shipment Share % = 
+DIVIDE([Interstate Shipment Count], [Items Sold], 0)
+
+Local Shipment Share % (<=100km) = 
+DIVIDE(
+    CALCULATE(COUNTROWS(FactOrderItems), FactOrderItems[distance_band] = "0–100 km"),
+    [Items Sold],
+    0
+)
+
+// ==============================================================================
+// 7. CUSTOMER RETENTION & PAYMENT FINANCING MEASURES
+// ==============================================================================
+
+Total Unique Customers = 
+DISTINCTCOUNT(FactOrders[customer_unique_id])
+
+Repeat Customers Count = 
+CALCULATE(
+    [Total Unique Customers],
+    DimCustomer[repeat_customer_flag] = 1
+)
+
+Repeat Customer Rate % = 
+DIVIDE([Repeat Customers Count], [Total Unique Customers], 0)
+
+Repeat Customer GMV Share % = 
+DIVIDE(
+    CALCULATE([Gross Merchandise Value (GMV)], DimCustomer[repeat_customer_flag] = 1),
+    [Gross Merchandise Value (GMV)],
+    0
+)
+
+Total Payment Transactions = 
+COUNTROWS(FactPayments)
+
+Average Installments (Credit Card) = 
+CALCULATE(
+    AVERAGE(FactPayments[payment_installments]),
+    FactPayments[payment_type] = "credit_card"
+)
+
+Multi-Payment Orders Count = 
+CALCULATE(
+    [Total Orders],
+    FactOrders[order_item_count] > 1 || RELATEDTABLE(FactPayments)
+)
+
+// ==============================================================================
+// 8. DYNAMIC SWITCH / KPI SELECTOR FORMATTERS
+// ==============================================================================
+
+Selected Primary KPI Value = 
+VAR SelectedMetric = SELECTEDVALUE('KPI Parameter'[Parameter], "GMV")
+RETURN
+    SWITCH(
+        SelectedMetric,
+        "GMV", [Gross Merchandise Value (GMV)],
+        "Orders", [Total Orders],
+        "On-Time Rate", [On-Time Delivery Rate %],
+        "CSAT", [Average Review Score (CSAT)],
+        "AOV", [Average Order Value (AOV)],
+        [Gross Merchandise Value (GMV)]
+    )
+
+Selected KPI Dynamic Title = 
+"Control Tower Metric: " & SELECTEDVALUE('KPI Parameter'[Parameter], "Gross Merchandise Value (GMV)")
