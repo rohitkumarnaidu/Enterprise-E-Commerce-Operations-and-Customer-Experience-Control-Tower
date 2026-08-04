@@ -15,9 +15,10 @@
 | 5 | [Phase 1 — Environment Setup](#-phase-1--environment-setup) |
 | 6 | [Phase 2 — Source Inventory and Grain Analysis](#-phase-2--source-inventory-and-grain-analysis) |
 | 7 | [Phase 3 — Data Profiling](#-phase-3--data-profiling) |
-| 8 | [Key Concepts Glossary](#-key-concepts-glossary) |
-| 9 | [Real-World Analogies](#-real-world-analogies) |
-| 10 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
+| 8 | [Phase 4 — Data Cleaning and Staging Layer](#-phase-4--data-cleaning-and-staging-layer) |
+| 9 | [Key Concepts Glossary](#-key-concepts-glossary) |
+| 10 | [Real-World Analogies](#-real-world-analogies) |
+| 11 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
 
 ---
 
@@ -1024,6 +1025,162 @@ You would never skip the inspection and just drive away. Same logic applies to d
 
 **"How did you handle the reviews table?"**
 > "The review_id column was supposed to be a unique identifier but had 814 duplicate values. Additionally, 547 orders had more than one review row, which would multiply rows on any join. I flagged these in the data quality report and planned two treatments: deduplicate review_id first, then aggregate reviews to order level using the average score per order with a documented rule."
+
+---
+
+## 🧹 Phase 4 — Data Cleaning and Staging Layer
+
+**Notebook created:** [`notebooks/02_data_cleaning_and_staging.ipynb`](../notebooks/02_data_cleaning_and_staging.ipynb)  
+**Script created:** [`src/phase4_cleaning_staging.py`](../src/phase4_cleaning_staging.py)  
+**Output Directory:** `data/staging/`
+
+### What Did We Do?
+
+1. Built an automated data cleaning and staging pipeline in Python.
+2. Standardized text casing, stripped trailing whitespaces, and safely converted datetime columns.
+3. Engineered **audit and data quality flags** to identify operational anomalies without throwing away valid business records.
+4. Joined English category translations to the Brazilian Portuguese product taxonomy.
+5. Calculated physical product features: `product_volume_cm3`, `product_size_band`, and `product_weight_band`.
+6. Created **order-level aggregated staging tables** for `payments` and `reviews` to eliminate 1:many cartesian explosion risks during star schema joins.
+7. Deduplicated geolocation records and aggregated 1,000,163 GPS readings into **19,010 clean, unique ZIP coordinates** using median statistics.
+
+---
+
+### Why Do We Need a Staging Layer? (The Medallion Architecture)
+
+In modern enterprise data platforms (Databricks, Snowflake, BigQuery), data pipelines follow the **Medallion Architecture**:
+
+```mermaid
+flowchart LR
+    subgraph BRONZE["🥉 Bronze Layer (Raw)"]
+        R["Raw Source Files\nImmutable, read-only\nMessy, unparsed, nulls"]
+    end
+
+    subgraph SILVER["🥈 Silver Layer (Staging)"]
+        S["Cleaned & Standardized\nTypes parsed, quality flags\nPre-aggregated 1:1 layers"]
+    end
+
+    subgraph GOLD["🥇 Gold Layer (Processed/DWH)"]
+        G["Fact & Dimension Tables\nStar Schema\nPower BI & Business SQL"]
+    end
+
+    R -->|Phase 4: Clean & Stage| S
+    S -->|Phase 5: Feature & Model| G
+```
+
+- **Bronze (Raw):** Preserves original history as the single source of truth. Never modified directly.
+- **Silver (Staging):** Conformed, standardized, cleaned, enriched with validation flags. (What we built in Phase 4!)
+- **Gold (Processed):** Dimensional models ready for BI consumption and executive dashboards.
+
+---
+
+### Overview of Phase 4 Transformations
+
+```mermaid
+graph TD
+    subgraph Orders["📦 Orders Cleaning"]
+        O1["Parse 5 datetime columns"] --> O2["missing_approval_flag"]
+        O1 --> O3["missing_carrier_flag"]
+        O1 --> O4["missing_delivery_flag"]
+        O1 --> O5["invalid_timestamp_sequence_flag"]
+        O1 --> O6["delivered_status_mismatch_flag"]
+    end
+
+    subgraph Products["📦 Products & Categories"]
+        P1["Merge Portuguese + English"] --> P2["Calculate Volume = L x H x W"]
+        P2 --> P3["Size Bands: Small, Medium, Large, XL"]
+        P2 --> P4["Weight Bands: Light, Medium, Heavy"]
+    end
+
+    subgraph Payments["💳 Payments Staging"]
+        Pay1["stg_order_payments (Line item)"]
+        Pay2["stg_payments_order_agg (Order level)\nTotal value, Max installments, Primary type, Multi-payment flag"]
+    end
+
+    subgraph Reviews["⭐ Reviews Staging"]
+        R1["stg_order_reviews (Deduplicated review_id)"]
+        R2["stg_reviews_order_agg (Order level)\nAverage score, Response hours, Comment flag"]
+    end
+
+    subgraph Geo["📍 Geolocation Staging"]
+        G1["Filter Brazil Bounding Box Outliers"] --> G2["Group by ZIP Prefix -> Median Lat/Lng"]
+        G2 --> G3["19,010 Unique ZIPs (100% Unique PK)"]
+    end
+```
+
+---
+
+### Detailed Breakdown of Staged Datasets
+
+| Staged File | Rows | Columns | Key Transformations Applied |
+|---|---|---|---|
+| `stg_orders.csv` | 99,441 | 13 | Datetime parsing, 5 quality/sequence audit flags |
+| `stg_order_items.csv` | 112,650 | 9 | Numeric validation, `item_total_value`, `freight_to_price_ratio` |
+| `stg_customers.csv` | 99,441 | 5 | Title-cased city, uppercase state, preserved dual customer IDs |
+| `stg_sellers.csv` | 3,095 | 4 | Standardized city/state strings |
+| `stg_products.csv` | 32,951 | 13 | English translation join, `product_volume_cm3`, size/weight bands |
+| `stg_order_payments.csv` | 103,886 | 5 | Cleaned payment types (`not_defined` → `unknown`), valid bounds |
+| `stg_payments_order_agg.csv` | 99,440 | 6 | **Aggregated to order grain:** total payment, max installments, primary type |
+| `stg_order_reviews.csv` | 98,410 | 8 | Deduplicated by `review_id`, response duration in hours calculated |
+| `stg_reviews_order_agg.csv` | 98,673 | 6 | **Aggregated to order grain:** average score, latest score, comment flag |
+| `stg_geolocation_zip.csv` | 19,010 | 4 | Bounding box filtered, **aggregated to 1 row per ZIP using median coordinate** |
+
+---
+
+### Key Formulas & Logic Applied
+
+#### 1. Data Quality Flags (Orders)
+```python
+# Sequence errors: delivery before purchase, or carrier before purchase
+orders['invalid_timestamp_sequence_flag'] = (
+    (orders['order_delivered_customer_date'] < orders['order_purchase_timestamp']) |
+    (orders['order_delivered_carrier_date'] < orders['order_purchase_timestamp']) |
+    (orders['order_delivered_customer_date'] < orders['order_delivered_carrier_date'])
+).fillna(False).astype(int)
+
+# Status says delivered, but timestamp is missing
+orders['delivered_status_mismatch_flag'] = (
+    (orders['order_status'] == 'delivered') & (orders['order_delivered_customer_date'].isnull())
+).astype(int)
+```
+
+#### 2. Physical Dimensions & Volume (Products)
+$$\text{Product Volume (cm}^3\text{)} = \text{Length (cm)} \times \text{Height (cm)} \times \text{Width (cm)}$$
+
+- **Small:** $< 5,000\text{ cm}^3$ ($< 5\text{ Liters}$)
+- **Medium:** $5,000 - 20,000\text{ cm}^3$ ($5 - 20\text{ Liters}$)
+- **Large:** $20,000 - 60,000\text{ cm}^3$ ($20 - 60\text{ Liters}$)
+- **Extra Large:** $\ge 60,000\text{ cm}^3$ ($\ge 60\text{ Liters}$)
+
+#### 3. Primary Payment Type Logic (Payments)
+When a customer splits an order across multiple payment types (e.g. Voucher + Credit Card):
+$$\text{Primary Payment Type} = \text{Payment Method with the Highest Monetary Value}$$
+
+#### 4. Geolocation Median Aggregation
+$$\text{Latitude}_{\text{ZIP}} = \text{Median}(\text{Latitudes of that ZIP}), \quad \text{Longitude}_{\text{ZIP}} = \text{Median}(\text{Longitudes of that ZIP})$$
+*Using median instead of mean prevents erroneous GPS readings (e.g. phone glitches outside Brazil) from shifting the geographic center.*
+
+---
+
+### Real-World Analogy for Phase 4
+
+Think of the Staging Layer like a **professional restaurant kitchen prep line (Mise en Place)**:
+- **Raw Layer (Bronze):** Bulk vegetables and unwashed ingredients arrive from the supplier with dirt and packaging.
+- **Staging Layer (Silver):** The prep cooks wash, peel, chop, weigh, and portion every ingredient into clean, standardized containers. Bad vegetables are flagged or trimmed, and spices are pre-measured.
+- **Processed Layer (Gold):** The executive chef can now cook meals (build models and dashboards) instantly without stopping to wash or trim vegetables.
+
+---
+
+### Interview Answers — Phase 4
+
+**"Why did you create quality flags instead of deleting bad rows in Phase 4?"**
+> "In an enterprise environment, deleting rows with missing delivery dates or sequence anomalies destroys financial records. An order with a missing delivery date might still represent R$ 500 in real GMV and customer payments. By adding boolean flags (`missing_delivery_flag`, `invalid_timestamp_sequence_flag`), we preserve full financial integrity for revenue reporting while enabling downstream logistics queries to filter for valid delivery records safely."
+
+**"How did you solve the grain mismatch when joining payments and reviews to orders?"**
+> "I built dual staging outputs for payments and reviews: a detailed line-item table and an order-level pre-aggregated table. For payments, the aggregated table calculates total payment value, max installments, and determines the primary payment method. This converted a 1-to-many relationship into a clean 1-to-1 relationship, ensuring that joining payments to orders never duplicates order counts or inflates GMV."
+
+**"Why did you use median rather than mean for geolocation coordinates?"**
+> "GPS coordinates collected from mobile devices and carrier pings frequently contain extreme outlier noise (e.g. towers momentarily registering coordinates in the ocean or overseas). The mean is highly sensitive to outliers, which would shift the estimated location of an entire ZIP code. The median is robust to extreme values and accurately represents the true central geographic point of each ZIP prefix."
 
 ---
 
