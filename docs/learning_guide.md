@@ -16,9 +16,10 @@
 | 6 | [Phase 2 — Source Inventory and Grain Analysis](#-phase-2--source-inventory-and-grain-analysis) |
 | 7 | [Phase 3 — Data Profiling](#-phase-3--data-profiling) |
 | 8 | [Phase 4 — Data Cleaning and Staging Layer](#-phase-4--data-cleaning-and-staging-layer) |
-| 9 | [Key Concepts Glossary](#-key-concepts-glossary) |
-| 10 | [Real-World Analogies](#-real-world-analogies) |
-| 11 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
+| 9 | [Phase 5 — Data Integration & Feature Engineering](#-phase-5--data-integration--feature-engineering) |
+| 10 | [Key Concepts Glossary](#-key-concepts-glossary) |
+| 11 | [Real-World Analogies](#-real-world-analogies) |
+| 12 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
 
 ---
 
@@ -1181,6 +1182,192 @@ Think of the Staging Layer like a **professional restaurant kitchen prep line (M
 
 **"Why did you use median rather than mean for geolocation coordinates?"**
 > "GPS coordinates collected from mobile devices and carrier pings frequently contain extreme outlier noise (e.g. towers momentarily registering coordinates in the ocean or overseas). The mean is highly sensitive to outliers, which would shift the estimated location of an entire ZIP code. The median is robust to extreme values and accurately represents the true central geographic point of each ZIP prefix."
+
+---
+
+## 🏗️ Phase 5 — Data Integration & Feature Engineering
+
+**Notebook created:** [`notebooks/03_data_integration_and_feature_engineering.ipynb`](../notebooks/03_data_integration_and_feature_engineering.ipynb)  
+**Script created:** [`src/phase5_integration_features.py`](../src/phase5_integration_features.py)  
+**Output Directory:** `data/processed/`
+
+### What Did We Do?
+
+1. Integrated staged datasets into a complete enterprise **Star Schema** following Kimball dimensional modeling principles.
+2. Built **`fact_orders`** at order grain (99,441 rows) enriched with operational KPIs, aggregated financial summaries, and review metrics.
+3. Built **`fact_order_items`** at line-item grain (112,650 rows) with product details, seller locations, and geospatial shipment distance.
+4. Calculated end-to-end fulfillment milestone durations (approval, handling, transit, total delivery, promised delivery, and delay days).
+5. Computed Great-Circle **Haversine Distance** (in kilometers) between seller and customer ZIP centroids.
+6. Aggregated customer history into **`dim_customers`** using `customer_unique_id` to track repeat buying behavior, lifetime value (LTV), and satisfaction.
+7. Generated **`dim_sellers`** (Seller Performance Scorecard) tracking on-time delivery rate %, total GMV, delay averages, and state coverage.
+8. Created a corporate calendar table **`dim_date`** (1,096 days from 2016 to 2018) for Power BI time intelligence.
+
+---
+
+### Star Schema Architecture (The Gold Layer)
+
+```mermaid
+erDiagram
+    dim_date ||--o{ fact_orders : "order_purchase_date = date"
+    dim_customers ||--o{ fact_orders : "customer_unique_id"
+    dim_geography ||--o{ fact_orders : "customer_zip_code_prefix"
+    fact_orders ||--|{ fact_order_items : "order_id"
+    dim_products ||--o{ fact_order_items : "product_id"
+    dim_sellers ||--o{ fact_order_items : "seller_id"
+    dim_geography ||--o{ fact_order_items : "seller_zip_code_prefix"
+    fact_orders ||--o{ fact_payments : "order_id"
+    fact_orders ||--o{ fact_reviews : "order_id"
+
+    fact_orders {
+        string order_id PK
+        string customer_id FK
+        string customer_unique_id FK
+        string order_status
+        float gmv
+        float freight_value
+        float total_order_value
+        float delivery_days
+        float delay_days
+        string delivery_status
+        int late_delivery_flag
+        float review_score_avg
+        string primary_payment_type
+    }
+
+    fact_order_items {
+        string order_id FK
+        int order_item_id PK
+        string product_id FK
+        string seller_id FK
+        float price
+        float freight_value
+        float distance_km
+        string distance_band
+    }
+
+    dim_customers {
+        string customer_unique_id PK
+        int total_orders
+        float total_gmv
+        float average_order_value
+        int repeat_customer_flag
+        float avg_review_score
+    }
+
+    dim_sellers {
+        string seller_id PK
+        int total_orders
+        int items_sold
+        float total_gmv
+        float on_time_rate
+        float avg_review_score
+    }
+```
+
+---
+
+### Order Fulfillment Lifecycle & Duration Engineering
+
+Every e-commerce order progresses through distinct operational stages:
+
+```mermaid
+flowchart LR
+    P["🛒 Purchase\n(order_purchase_timestamp)"]
+    A["💳 Approval\n(order_approved_at)"]
+    C["📦 Carrier Handover\n(order_delivered_carrier_date)"]
+    D["🏠 Delivered to Customer\n(order_delivered_customer_date)"]
+    E["📅 Promised Target\n(order_estimated_delivery_date)"]
+
+    P -->|approval_hours| A
+    A -->|handling_days| C
+    C -->|transit_days| D
+    P -->|delivery_days (Total SLA)| D
+    D -.->|delay_days = Actual - Promised| E
+```
+
+#### Duration Formulas
+- **Approval Duration (hours):**
+  $$\text{approval\_hours} = \frac{\text{order\_approved\_at} - \text{order\_purchase\_timestamp}}{3600}$$
+- **Handling Duration (days):**
+  $$\text{handling\_days} = \frac{\text{order\_delivered\_carrier\_date} - \text{order\_approved\_at}}{86400}$$
+- **Transit Duration (days):**
+  $$\text{transit\_days} = \frac{\text{order\_delivered\_customer\_date} - \text{order\_delivered\_carrier\_date}}{86400}$$
+- **Total Fulfillment Duration (days):**
+  $$\text{delivery\_days} = \frac{\text{order\_delivered\_customer\_date} - \text{order\_purchase\_timestamp}}{86400}$$
+- **Promised Duration (days):**
+  $$\text{promised\_delivery\_days} = \frac{\text{order\_estimated\_delivery\_date} - \text{order\_purchase\_timestamp}}{86400}$$
+- **Operational Delay (days):**
+  $$\text{delay\_days} = \frac{\text{order\_delivered\_customer\_date} - \text{order\_estimated\_delivery\_date}}{86400}$$
+
+---
+
+### Geospatial Distance: The Haversine Formula
+
+To analyze the relationship between shipping distance, freight cost, and delivery SLA, we calculate the great-circle distance between the seller's ZIP code centroid and the customer's ZIP code centroid on Earth:
+
+$$d = 2 R \arcsin\left(\sqrt{\sin^2\left(\frac{\Delta \phi}{2}\right) + \cos(\phi_1)\cos(\phi_2)\sin^2\left(\frac{\Delta \lambda}{2}\right)}\right)$$
+
+Where:
+- $R = 6,371\text{ km}$ (mean radius of Earth)
+- $\phi_1, \phi_2$ = Seller and Customer latitudes in radians
+- $\Delta \phi = \phi_2 - \phi_1$ (latitude difference)
+- $\Delta \lambda = \lambda_2 - \lambda_1$ (longitude difference)
+
+#### Distance Categorization Bands
+- `0–100 km`: Local / Same Metro Area
+- `101–500 km`: Regional / Neighboring States
+- `501–1,000 km`: Inter-Regional
+- `1,001–2,000 km`: Long-Haul
+- `2,000+ km`: Cross-Country (e.g. South/Southeast to North/Northeast)
+
+---
+
+### Processed Datasets (Gold Layer) Inventory
+
+| Table Name | Type | Grain | Rows | Key Business Metrics |
+|---|---|---|---|---|
+| `fact_orders.csv` | Fact | 1 row per `order_id` | 99,441 | GMV, freight, delivery days, delay days, on-time flag, review score |
+| `fact_order_items.csv` | Fact | 1 row per `order_item_id` | 112,650 | Price, freight, seller distance (km), product volume, weight |
+| `fact_payments.csv` | Fact | 1 row per payment record | 103,886 | Payment method, installment count, transaction value |
+| `fact_reviews.csv` | Fact | 1 row per review record | 98,410 | Star score, review creation/response duration |
+| `dim_customers.csv` | Dimension | 1 row per `customer_unique_id` | 96,096 | Total orders, lifetime GMV, AOV, repeat buyer flag, average rating |
+| `dim_sellers.csv` | Dimension | 1 row per `seller_id` | 3,095 | Orders fulfilled, items sold, on-time rate %, average rating, reach |
+| `dim_products.csv` | Dimension | 1 row per `product_id` | 32,951 | English category, dimensions, volume band, weight band |
+| `dim_geography.csv` | Dimension | 1 row per `zip_code_prefix` | 19,010 | Median latitude/longitude, city, state |
+| `dim_date.csv` | Dimension | 1 row per calendar day | 1,096 | Year, quarter, month, day of week, weekend indicator |
+
+---
+
+### Key Findings from Phase 5 Engineering
+
+1. **Overall GMV:** The total Gross Merchandise Value is **R$ 13,591,643.70** across 99,441 orders.
+2. **On-Time Delivery Performance:** **91.89%** of delivered orders arrived on or before the promised estimated delivery date.
+3. **Average Shipping Distance:** The average shipment traveled **596.7 km** across Brazil's territory.
+4. **Repeat Customer Rate:** Out of 96,096 unique individuals, only **2,997 customers (3.12%)** placed more than 1 order, highlighting a major opportunity for customer retention and loyalty programs.
+
+---
+
+### Real-World Analogy for Phase 5
+
+Think of Dimensional Modeling like a **modern department store vs a chaotic warehouse**:
+- **OLTP / Raw Data:** A massive warehouse where items are dumped in raw crates as they arrive from trucks. Finding all winter coats sold to customers in São Paulo requires searching every corner of the building.
+- **Dimensional Model (Star Schema):** A beautifully organized retail department store.
+  - In the center of the room are the **cash registers (Fact Tables)** recording every purchase transaction.
+  - Arranged neatly around the perimeter are the **aisles (Dimension Tables)**: Customer desk, Product shelves, Seller directories, and Calendar schedules.
+  - Any manager can answer business questions in seconds simply by linking the register ticket to the surrounding aisles.
+
+---
+
+### Interview Answers — Phase 5
+
+**"Why did you choose a Star Schema over a 3NF normalized schema for this project?"**
+> "In analytical and BI systems like Power BI and SQL data warehouses, query performance and simplicity are paramount. A 3NF normalized schema requires 8 to 10 table joins for basic reporting, which creates slow DAX calculations and complex relationships. By adopting a Kimball Star Schema with central fact tables (`fact_orders`, `fact_order_items`) and conformed dimensions (`dim_customers`, `dim_sellers`, `dim_products`, `dim_date`), we optimized for fast aggregations, intuitive slice-and-dice exploration, and efficient columnar storage."
+
+**"Why do you have two fact tables (`fact_orders` and `fact_order_items`) instead of just one?"**
+> "They exist at different business grains. `fact_orders` is at the order level (1 row per order) and serves executive, revenue, and delivery SLA reporting without needing row-multiplying item joins. `fact_order_items` is at the individual line-item grain (1 row per item), which is essential for SKU-level product analysis, seller scorecards, and multi-item basket economics. Keeping both grains cleanly separated avoids aggregation errors and cartesian joins."
+
+**"How did you calculate shipping distance and what did it reveal?"**
+> "Using the median coordinates of customer and seller ZIP code prefixes, I implemented the Haversine formula to compute great-circle distance in kilometers. This revealed that the average shipment traveled approximately 597 km. By grouping distances into operational tiers (0–100 km, 101–500 km, etc.), we enabled logistics teams to analyze the exact correlation between shipping distance, transit days, freight costs, and late delivery risk."
 
 ---
 
