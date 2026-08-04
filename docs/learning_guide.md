@@ -14,9 +14,10 @@
 | 4 | [Phase 0 — Business Requirements](#-phase-0--business-requirements) |
 | 5 | [Phase 1 — Environment Setup](#-phase-1--environment-setup) |
 | 6 | [Phase 2 — Source Inventory and Grain Analysis](#-phase-2--source-inventory-and-grain-analysis) |
-| 7 | [Key Concepts Glossary](#-key-concepts-glossary) |
-| 8 | [Real-World Analogies](#-real-world-analogies) |
-| 9 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
+| 7 | [Phase 3 — Data Profiling](#-phase-3--data-profiling) |
+| 8 | [Key Concepts Glossary](#-key-concepts-glossary) |
+| 9 | [Real-World Analogies](#-real-world-analogies) |
+| 10 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
 
 ---
 
@@ -830,7 +831,203 @@ If someone questions a number, you can trace every step.
 
 ---
 
-> 📌 **This document is continuously updated as we complete each project phase. Phases 3–13 will be added here as we proceed.**
+---
+
+## 🔬 Phase 3 — Data Profiling
+
+**File created:** [`notebooks/01_source_inventory_and_data_profiling.ipynb`](../notebooks/01_source_inventory_and_data_profiling.ipynb)  
+**Script created:** [`src/phase3_profiling.py`](../src/phase3_profiling.py)  
+**Output:** [`data/processed/data_quality_report.csv`](../data/processed/data_quality_report.csv)
+
+### What Did We Do?
+
+1. Loaded all 9 raw CSVs and parsed all datetime columns safely
+2. Ran table-specific profiling checks on every single source file
+3. Tested all primary key uniqueness and composite key uniqueness
+4. Detected timestamp sequence errors in the orders table
+5. Validated numeric ranges — price, freight, payment values
+6. Validated geographic coordinates against Brazil's bounding box
+7. Built a 17-row data quality report and saved it to CSV
+
+### Why Data Profiling Before Cleaning?
+
+```
+You cannot clean what you don't understand.
+You cannot treat a problem you haven't measured.
+You cannot document a fix without knowing the root cause.
+```
+
+Data profiling is the **diagnostic phase** — like a doctor running blood tests before prescribing medicine. Without profiling, you would be guessing at what to fix.
+
+**Real-world impact:** At companies like Walmart, data profiling runs automatically every night on new data loads. If a column that should have 0 nulls suddenly shows 500 nulls, an alert fires before any analyst or dashboard is affected.
+
+### Key Real Findings From the Actual Data
+
+```mermaid
+graph TD
+    subgraph HIGH["🔴 High Severity"]
+        H1["orders: 2,965 missing delivery dates\n→ Exclude from delivery time calc"]
+        H2["orders: 8 rows status=delivered\nbut no delivery date\n→ delivered_status_mismatch_flag"]
+        H3["payments: 2,961 orders with\nmultiple payment rows\n→ Must aggregate before join"]
+        H4["geolocation: 261,831 full\nrow duplicates\n→ Drop first"]
+        H5["geolocation: 1M rows for\n19,015 ZIP prefixes\n→ Aggregate: median lat/lng"]
+    end
+
+    subgraph MEDIUM["🟡 Medium Severity"]
+        M1["orders: 160 missing\napproval timestamps"]
+        M2["products: 610 missing\ncategory names"]
+        M3["reviews: 814 duplicate\nreview_id values"]
+        M4["reviews: 547 orders with\nmultiple review rows"]
+        M5["geolocation: 29 rows with\ncoords outside Brazil"]
+    end
+
+    subgraph LOW["🟢 Low Severity"]
+        L1["products: 2 rows missing\nphysical dimensions"]
+        L2["payments: 3 rows with\npayment_type=not_defined"]
+        L3["reviews: 87,656 missing\ncomment title (expected)"]
+    end
+```
+
+### The Profiling Workflow — Step by Step
+
+```mermaid
+flowchart LR
+    A["Load CSV\nwith pd.read_csv"] --> B["Parse dates\nwith pd.to_datetime"]
+    B --> C["Check shape\nrows x cols"]
+    C --> D["Check dtypes\ndf.info()"]
+    D --> E["Count nulls\ndf.isnull().sum()"]
+    E --> F["Test key uniqueness\ndf.duplicated()"]
+    F --> G["Validate ranges\nprice > 0, lat in bounds"]
+    G --> H["Check distributions\nvalue_counts()"]
+    H --> I["Log finding to\ndata quality report"]
+    I --> J["Save CSV\n+ visualise"]
+```
+
+### Real Statistics From the Actual Olist Data
+
+| Table | Rows | Key Quality | Critical Finding |
+|---|---|---|---|
+| orders | 99,441 | ✅ All unique | 2,965 missing delivery dates |
+| order_items | 112,650 | ✅ Composite unique | Avg 1.13 items/order |
+| customers | 99,441 | ✅ customer_id unique | 3,345 repeat buyers via unique_id |
+| products | 32,951 | ✅ All unique | 610 missing category names |
+| sellers | 3,095 | ✅ All unique | Clean — no issues |
+| payments | 103,886 | ✅ Composite unique | 2,961 orders have 2+ payment rows |
+| reviews | 99,224 | ⚠️ 814 duplicate review_ids | 547 orders have 2+ reviews |
+| geolocation | 1,000,163 | ❌ Not unique | 52.6 rows per ZIP on average |
+| category_translation | 71 | ✅ All unique | 2 product categories untranslatable |
+
+### Review Scores — Real Numbers
+
+| Score | Count | Group | Percentage |
+|---|---|---|---|
+| 1 ⭐ | 11,424 | 🔴 Negative | 11.5% |
+| 2 ⭐ | 3,151 | 🔴 Negative | 3.2% |
+| 3 ⭐ | 8,179 | 🟡 Neutral | 8.2% |
+| 4 ⭐ | 19,142 | 🟢 Positive | 19.3% |
+| 5 ⭐ | 57,328 | 🟢 Positive | 57.8% |
+
+**77.1%** of all reviews are Positive (4 or 5 stars).  
+**14.7%** of all reviews are Negative (1 or 2 stars).  
+Average review response time: **75.6 hours** (~3.15 days).
+
+### Payment Insights — Real Numbers
+
+| Payment Type | Count | Share |
+|---|---|---|
+| credit_card | 76,795 | 73.9% |
+| boleto | 19,784 | 19.0% |
+| voucher | 5,775 | 5.6% |
+| debit_card | 1,529 | 1.5% |
+| not_defined | 3 | 0.003% |
+
+Average installments: **2.85**. Max installments: **24**.
+
+### GMV Snapshot
+
+```
+GMV (sum of all item prices)  : R$ 13,591,644
+Total freight value            : R$  2,251,010
+Total customer order value     : R$ 15,842,654
+Freight as % of GMV            : 16.6%
+```
+
+### What Is a Data Quality Report?
+
+A data quality report is a structured table that documents every issue found during profiling:
+
+| Column | What it records |
+|---|---|
+| Table | Which source file the issue was found in |
+| Rule | What exactly the problem is |
+| Count | How many rows are affected |
+| Pct | What percentage of the table is affected |
+| Severity | High / Medium / Low |
+| Treatment | Exactly how we will fix it in Phase 4 |
+
+**Why document it?** So the cleaning step in Phase 4 has a clear checklist. Every treatment in Phase 4 maps back to a row in this report. This is standard practice in professional data engineering.
+
+### Pandas Functions Used in Profiling
+
+```python
+# Shape — rows and columns
+df.shape
+
+# Data types of each column
+df.info()
+df.dtypes
+
+# Missing value count per column
+df.isnull().sum()
+
+# Full row duplicates
+df.duplicated().sum()
+
+# Composite key duplicate check
+df.duplicated(['order_id', 'order_item_id']).sum()
+
+# Value distribution
+df['order_status'].value_counts()
+
+# Numeric statistics
+df['price'].describe()
+
+# Group-level aggregation
+df.groupby('order_id').size()
+
+# Conditional count (like COUNTIF in Excel)
+(df['price'] <= 0).sum()
+
+# Date difference
+(df['delivered_date'] - df['purchase_date']).dt.total_seconds() / 86400
+```
+
+### Real-World Analogy for Data Profiling
+
+Think of data profiling like a **pre-purchase inspection before buying a used car**:
+- You check the odometer (row count)
+- You look for rust (null values)
+- You check all 4 tyres (data types)
+- You test the engine (key uniqueness)
+- You check for hidden damage (sequence errors)
+- You write a report and decide what to fix before buying
+
+You would never skip the inspection and just drive away. Same logic applies to data.
+
+### Interview Answers — Phase 3
+
+**"How did you assess data quality?"**
+> "I ran a structured profiling pass on all 9 source tables before touching any cleaning step. For each table I checked shape, data types, null counts, key uniqueness, value distributions, and domain-specific rules — like whether delivery dates were after purchase dates. I catalogued every finding into a data quality report CSV with severity levels and planned treatments. This gave Phase 4 a clear, auditable checklist to work from."
+
+**"What was the most serious data quality issue you found?"**
+> "The geolocation table had 1 million rows for only 19,015 unique ZIP codes — an average of 52 coordinate readings per ZIP prefix. If joined directly without aggregation it would multiply every customer and seller row by 52, making all geographic metrics completely wrong. The fix was aggregating to one representative coordinate per ZIP using median lat/lng before any join."
+
+**"How did you handle the reviews table?"**
+> "The review_id column was supposed to be a unique identifier but had 814 duplicate values. Additionally, 547 orders had more than one review row, which would multiply rows on any join. I flagged these in the data quality report and planned two treatments: deduplicate review_id first, then aggregate reviews to order level using the average score per order with a documented rule."
+
+---
+
+> 📌 **This document is continuously updated as we complete each project phase.**
 
 ---
 
