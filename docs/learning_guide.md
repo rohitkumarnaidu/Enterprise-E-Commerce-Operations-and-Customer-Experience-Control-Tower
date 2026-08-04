@@ -17,9 +17,10 @@
 | 7 | [Phase 3 — Data Profiling](#-phase-3--data-profiling) |
 | 8 | [Phase 4 — Data Cleaning and Staging Layer](#-phase-4--data-cleaning-and-staging-layer) |
 | 9 | [Phase 5 — Data Integration & Feature Engineering](#-phase-5--data-integration--feature-engineering) |
-| 10 | [Key Concepts Glossary](#-key-concepts-glossary) |
-| 11 | [Real-World Analogies](#-real-world-analogies) |
-| 12 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
+| 10 | [Phase 6 — SQL Database & Analytical Queries](#-phase-6--sql-database--analytical-queries) |
+| 11 | [Key Concepts Glossary](#-key-concepts-glossary) |
+| 12 | [Real-World Analogies](#-real-world-analogies) |
+| 13 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
 
 ---
 
@@ -1368,6 +1369,160 @@ Think of Dimensional Modeling like a **modern department store vs a chaotic ware
 
 **"How did you calculate shipping distance and what did it reveal?"**
 > "Using the median coordinates of customer and seller ZIP code prefixes, I implemented the Haversine formula to compute great-circle distance in kilometers. This revealed that the average shipment traveled approximately 597 km. By grouping distances into operational tiers (0–100 km, 101–500 km, etc.), we enabled logistics teams to analyze the exact correlation between shipping distance, transit days, freight costs, and late delivery risk."
+
+---
+
+## 🗄️ Phase 6 — SQL Database & Analytical Queries
+
+**Database created:** `data/processed/ecommerce_control_tower.db` (SQLite · 162.4 MB)  
+**SQL Queries Suite:** [`sql/analytical_queries.sql`](../sql/analytical_queries.sql) (50 Production Queries)  
+**Runner Script:** [`src/phase6_sql_pipeline.py`](../src/phase6_sql_pipeline.py)  
+**Interactive Notebook:** [`notebooks/04_sql_analytical_queries.ipynb`](../notebooks/04_sql_analytical_queries.ipynb)
+
+### What Did We Do?
+
+1. Created a high-performance relational database (`ecommerce_control_tower.db`) and ingested all 9 Star Schema tables.
+2. Created **12 B-Tree Indexes** across primary keys (`order_id`, `customer_unique_id`, `seller_id`, `product_id`) and foreign keys to enable sub-millisecond query execution.
+3. Authored **50 production SQL queries** spanning 6 operational business domains.
+4. Leveraged advanced SQL techniques: Common Table Expressions (`WITH`), Window Functions (`OVER()`, `LAG()`, `ROW_NUMBER()`, `DENSE_RANK()`, `AVG() OVER (ROWS 2 PRECEDING)`), and Pareto 80/20 cumulative distributions.
+5. Executed complete pipeline validation with a **100% financial and metric reconciliation audit** between Python and SQL.
+
+---
+
+### SQL Analytical Query Suite Taxonomy
+
+```mermaid
+mindmap
+  root((50 Enterprise SQL Queries))
+    Executive & Revenue (Q1–Q10)
+      Total Orders & GMV (R$ 13.59M)
+      Delivered vs Cancelled Volume
+      AOV (R$ 136.68) & Basket Size
+      Monthly GMV & Order Trajectories
+    Delivery SLA & Operations (Q11–Q20)
+      On-Time Rate (91.89%)
+      Severe Delay Rate (>7 days late)
+      State Destination SLA Performance
+      Handling vs Transit Duration Split
+    Customer Experience & CSAT (Q21–Q28)
+      Platform CSAT (4.09 / 5.0)
+      Promoters (76.8%) vs Detractors (15.2%)
+      Direct Delay vs CSAT Correlation
+      VIP High-Value Detractor Orders
+    Seller & Category Scorecards (Q29–Q36)
+      Top Sellers by GMV
+      Worst Sellers by Late Delivery Rate
+      Category GMV Mix & Freight Ratios
+      Category CSAT Benchmarking
+    Retention & Payments (Q37–Q42)
+      Repeat Customer Rate (3.12%)
+      Credit Card Installment Breakdown
+      Split Payment Orders Analysis
+      Financial Reconciliation
+    Advanced Analytics (Q43–Q50)
+      Seller Pareto 80/20 Cumulative GMV
+      Category Concentration Curve
+      MoM Growth via LAG()
+      Rolling 3-Month Moving Average
+      Distance Band Degradation
+```
+
+---
+
+### Key Advanced SQL Patterns & Syntax
+
+#### 1. Pareto 80/20 Cumulative Distribution (`SUM() OVER`)
+```sql
+WITH SellerRevenue AS (
+    SELECT 
+        seller_id,
+        total_gmv,
+        SUM(total_gmv) OVER () AS platform_gmv,
+        SUM(total_gmv) OVER (ORDER BY total_gmv DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_gmv,
+        ROW_NUMBER() OVER (ORDER BY total_gmv DESC) AS seller_rank,
+        COUNT(*) OVER () AS total_sellers
+    FROM dim_sellers
+)
+SELECT 
+    seller_rank,
+    seller_id,
+    total_gmv,
+    ROUND(100.0 * cumulative_gmv / platform_gmv, 2) AS cumulative_gmv_pct,
+    ROUND(100.0 * seller_rank / total_sellers, 2) AS pct_of_sellers
+FROM SellerRevenue;
+```
+
+#### 2. Month-over-Month (MoM) Growth using `LAG()`
+```sql
+WITH MonthlyStats AS (
+    SELECT 
+        SUBSTR(order_purchase_timestamp, 1, 7) AS ym,
+        SUM(gmv) AS gmv
+    FROM fact_orders
+    WHERE order_purchase_timestamp IS NOT NULL
+    GROUP BY SUBSTR(order_purchase_timestamp, 1, 7)
+)
+SELECT 
+    ym,
+    ROUND(gmv, 2) AS current_month_gmv,
+    ROUND(LAG(gmv, 1) OVER (ORDER BY ym), 2) AS previous_month_gmv,
+    ROUND(100.0 * (gmv - LAG(gmv, 1) OVER (ORDER BY ym)) / LAG(gmv, 1) OVER (ORDER BY ym), 2) AS mom_growth_pct
+FROM MonthlyStats
+ORDER BY ym;
+```
+
+#### 3. 3-Month Moving Average (`AVG() OVER (ROWS 2 PRECEDING)`)
+```sql
+WITH MonthlySales AS (
+    SELECT 
+        SUBSTR(order_purchase_timestamp, 1, 7) AS ym,
+        SUM(gmv) AS monthly_gmv
+    FROM fact_orders
+    WHERE order_purchase_timestamp IS NOT NULL
+    GROUP BY SUBSTR(order_purchase_timestamp, 1, 7)
+)
+SELECT 
+    ym,
+    ROUND(monthly_gmv, 2) AS monthly_gmv,
+    ROUND(AVG(monthly_gmv) OVER (ORDER BY ym ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2) AS rolling_3m_avg_gmv
+FROM MonthlySales
+ORDER BY ym;
+```
+
+---
+
+### Financial & Data Integrity Reconciliation Audit (Python vs SQL)
+
+| Metric | Python Pipeline Result | SQL Database Result | Reconciliation Status |
+|---|---|---|---|
+| **Total Orders** | 99,441 | 99,441 | ✅ 100.00% Exact Match |
+| **Total Line Items** | 112,650 | 112,650 | ✅ 100.00% Exact Match |
+| **Unique Customers** | 96,096 | 96,096 | ✅ 100.00% Exact Match |
+| **Total Active Sellers** | 3,095 | 3,095 | ✅ 100.00% Exact Match |
+| **Gross Merchandise Value (GMV)** | R$ 13,591,643.70 | R$ 13,591,643.70 | ✅ 100.00% Exact Match |
+| **On-Time Delivery Rate** | 91.89% | 91.89% | ✅ 100.00% Exact Match |
+| **Overall CSAT Score** | 4.09 / 5.0 | 4.09 / 5.0 | ✅ 100.00% Exact Match |
+
+---
+
+### Real-World Analogy for Phase 6
+
+Think of the SQL Layer like an **Air Traffic Control Tower and Certified Flight Ledger**:
+- While the engineering team builds the radar hardware and gathers weather sensors (Python data staging), the **Air Traffic Controllers and Flight Auditors rely on a standardized, ultra-fast query console (SQL)** to track active planes, calculate delays, flag risk zones, and reconcile passenger tickets in real time.
+- Any discrepancy between the flight manifest (orders) and the baggage ledger (items) triggers an instant audit alarm.
+
+---
+
+### Interview Answers — Phase 6
+
+**"Why did you write 50 SQL queries if you already had Pandas in Python?"**
+> "While Python is excellent for data manipulation, cleaning, and complex math like Haversine distance, SQL is the universal lingua franca for enterprise data warehousing, BI tools, and stakeholder ad-hoc reporting. Writing these 50 SQL queries serves three critical purposes: (1) it validates the integrity and grain of our star schema, (2) it enables direct connectivity for Power BI and analytical databases, and (3) it establishes an auditable SQL metric library for business teams."
+
+**"How did you use Window Functions to analyze business trends?"**
+> "I used several window function patterns: `LAG()` to calculate Month-over-Month GMV growth trajectories without self-joins; `SUM() OVER (ORDER BY GMV DESC ROWS UNBOUNDED PRECEDING)` to compute cumulative revenue and validate the Pareto 80/20 distribution across sellers and categories; `DENSE_RANK() OVER (PARTITION BY seller_state)` to rank top merchants regionally; and `AVG() OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` to smooth seasonal revenue spikes with rolling 3-month moving averages."
+
+**"How did you handle financial reconciliation between Fact Orders and Fact Order Items?"**
+> "Because items can be grouped into multi-item orders, any discrepancy in rounding or join logic will corrupt financial statements. I wrote an automated cross-table validation query (`Query 50`) that checked: $\sum \text{fact\_orders.gmv} = \sum \text{fact\_order\_items.price} = \sum \text{dim\_sellers.total\_gmv}$. Both Python and SQL confirmed an exact match down to the cent: **R$ 13,591,643.70**."
 
 ---
 
