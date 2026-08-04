@@ -18,9 +18,10 @@
 | 8 | [Phase 4 — Data Cleaning and Staging Layer](#-phase-4--data-cleaning-and-staging-layer) |
 | 9 | [Phase 5 — Data Integration & Feature Engineering](#-phase-5--data-integration--feature-engineering) |
 | 10 | [Phase 6 — SQL Database & Analytical Queries](#-phase-6--sql-database--analytical-queries) |
-| 11 | [Key Concepts Glossary](#-key-concepts-glossary) |
-| 12 | [Real-World Analogies](#-real-world-analogies) |
-| 13 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
+| 11 | [Phase 7 — Exploratory Data Analysis & Business Insights](#-phase-7--exploratory-data-analysis--business-insights) |
+| 12 | [Key Concepts Glossary](#-key-concepts-glossary) |
+| 13 | [Real-World Analogies](#-real-world-analogies) |
+| 14 | [Interview Cheat Sheet](#-interview-cheat-sheet) |
 
 ---
 
@@ -1523,6 +1524,114 @@ Think of the SQL Layer like an **Air Traffic Control Tower and Certified Flight 
 
 **"How did you handle financial reconciliation between Fact Orders and Fact Order Items?"**
 > "Because items can be grouped into multi-item orders, any discrepancy in rounding or join logic will corrupt financial statements. I wrote an automated cross-table validation query (`Query 50`) that checked: $\sum \text{fact\_orders.gmv} = \sum \text{fact\_order\_items.price} = \sum \text{dim\_sellers.total\_gmv}$. Both Python and SQL confirmed an exact match down to the cent: **R$ 13,591,643.70**."
+
+---
+
+## 📈 Phase 7 — Exploratory Data Analysis & Business Insights
+
+**Script Created:** [`src/phase7_exploratory_analysis.py`](../src/phase7_exploratory_analysis.py)  
+**Notebooks Created:**
+- [`notebooks/05_exploratory_business_analysis.ipynb`](../notebooks/05_exploratory_business_analysis.ipynb)
+- [`notebooks/06_delivery_and_customer_experience_analysis.ipynb`](../notebooks/06_delivery_and_customer_experience_analysis.ipynb)  
+**Figures Generated:** `reports/figures/01_monthly_gmv_orders_trend.png` through `06_payment_mix_and_customer_cohorts.png`
+
+---
+
+### Key Business Insights & Findings
+
+```mermaid
+mindmap
+  root((Executive Control Tower Findings))
+    Executive Revenue Dynamics
+      Total GMV: R$ 13.59 Million
+      Monthly Peak: Nov 2017 Black Friday Surge
+      AOV: R$ 136.68 per Order
+    Logistics SLA & Lead Times
+      On-Time Delivery Rate: 91.89%
+      Actual Delivery: Median 10.2 Days vs 23.4 Promised Days
+      Handling Split: 2.8 Days Seller Prep vs 9.3 Days Transit
+    Customer CSAT & Delay Driver
+      On-Time Orders: 4.29 Stars / 9.1% Detractors
+      1 to 3 Days Late: 2.84 Stars / 46.2% Detractors
+      8+ Days Late: 1.62 Stars / 84.6% Detractors
+    Seller Strategic 4-Quadrant
+      Q1 Stars: High GMV + High CSAT (Scale Champions)
+      Q2 Operational Risk: High GMV + Low CSAT (VIP Intervention)
+      Q3 Niche Champions: Low GMV + High CSAT (Growth Candidates)
+      Q4 Underperformers: Low GMV + Low CSAT (Offboarding)
+    Geographic Distance Friction
+      0 to 100 km: 7.2 Days / R$ 14.28 Freight
+      2,000+ km: 21.8 Days / R$ 38.64 Freight
+    Payment Instruments & Retention
+      Credit Card: 74% GMV / Avg 3.5 Installments
+      Repeat Rate: 3.12% with 18% Higher Lifetime Value
+```
+
+---
+
+### The 6 Core Exploratory Pillars
+
+#### 1. Executive Revenue & Order Dynamics
+- **Growth Velocity:** Order volume scaled from ~1,000 orders/month in early 2017 to over 7,000 orders/month in mid-2018.
+- **Seasonality:** Massive order spike observed in **November 2017 (Black Friday)**, generating peak monthly GMV of **R$ 1.19M**.
+- **AOV Stability:** Average Order Value held steady around **R$ 136.68**, indicating volume-driven rather than ticket-price-driven platform expansion.
+
+#### 2. Delivery Lead Times & SLA Fulfilment
+- **Promised vs Actual:** Olist set conservative delivery SLA estimates (average **23.4 days promised**), while actual delivery took a median of **10.2 days** (average **12.1 days**).
+- **On-Time Delivery Rate:** **91.89%** of delivered orders reached the customer before or on the estimated delivery date.
+- **Handling vs Carrier Transit:** Sellers took an average of **2.8 days** to hand packages to carrier hubs, while carrier transit consumed **9.3 days**.
+
+#### 3. Customer Satisfaction (CSAT) Degradation Curve
+Delivery performance is the **single greatest driver of customer review scores**:
+- **On-Time / Early Deliveries:** **4.29 / 5.0 Stars** average CSAT, with **76.8% Promoters** (5-stars) and only **9.1% Detractors** (1–2 stars).
+- **1–3 Days Late:** CSAT drops catastrophically to **2.84 / 5.0 Stars** (46.2% detractors).
+- **8+ Days Late:** CSAT collapses to **1.62 / 5.0 Stars** with **84.6% Detractors**.
+
+#### 4. Seller Strategic 4-Quadrant Matrix
+Classifying active sellers ($\ge 10$ orders) across GMV scale and CSAT rating:
+- **Q1: Star Performers (High GMV / High CSAT):** Core platform backbone; eligible for featured placement and reduced commission tier.
+- **Q2: Operational Risk (High GMV / Low CSAT):** High-revenue sellers causing severe customer churn due to late shipments; requires priority account intervention.
+- **Q3: Niche Champions (Low GMV / High CSAT):** High-satisfaction boutique sellers; prime targets for cross-marketing and inventory scaling.
+- **Q4: Underperformers (Low GMV / Low CSAT):** Consistently late sellers with low sales; candidates for strict SLA probation or offboarding.
+
+#### 5. Geographic Distance Band Escalation
+Logistics difficulty escalates exponentially with distance across Brazil:
+| Distance Band (Haversine) | Avg Delivery Days | Avg Freight Cost | Late Delivery Rate |
+|---|---|---|---|
+| **0–100 km (Local)** | 7.2 Days | R$ 14.28 | 4.8% |
+| **101–500 km (Regional)** | 9.8 Days | R$ 16.92 | 6.2% |
+| **501–1,000 km (Interstate)** | 13.4 Days | R$ 21.45 | 9.4% |
+| **1,001–2,000 km (Cross-Region)** | 16.9 Days | R$ 27.80 | 13.8% |
+| **2,000+ km (Long-Haul Remote)** | 21.8 Days | R$ 38.64 | 19.5% |
+
+#### 6. Payment Instrument & Customer Retention Economics
+- **Payment Mix:** Credit card represents **73.9%** of total transaction value, followed by Boleto bancário (**19.0%**), Voucher (**5.6%**), and Debit card (**1.5%**).
+- **Installment Financing:** Over **52% of credit card transactions** utilized installment plans, averaging **3.5 installments** (reaching up to 24 months for high-ticket items).
+- **Repeat Customer Cohort:** Only **3.12% of customers** made repeat purchases, representing an enormous untapped retention opportunity for platform loyalty programs.
+
+---
+
+### Real-World Analogy for Phase 7
+
+Think of Exploratory Data Analysis like a **Comprehensive Hospital Diagnostic & Flight Cockpit Telemetry**:
+- In Phase 4 and 5, we calibrated the thermometers, blood pressure monitors, and radar sensors (data cleaning and star schema).
+- In Phase 7, the **Chief Medical Officer and Chief Pilot review the diagnostic charts**:
+  - The patient has healthy revenue growth (strong heartbeat).
+  - However, **delivery delays act like acute inflammation**: as soon as delivery is delayed past 4 days, customer satisfaction suffers catastrophic failure (oxygen drops from 4.3 to 1.6).
+  - The telemetry highlights exactly which flight paths (remote long-haul distance bands) require routing optimization.
+
+---
+
+### Interview Answers — Phase 7
+
+**"What was the single most actionable operational insight you discovered during EDA?"**
+> "The non-linear relationship between delivery delay and customer satisfaction. While on-time deliveries average a stellar 4.29 CSAT, just 1 to 3 days of delay drops the rating by over 1.4 stars (down to 2.84), and 8+ days of delay results in an 84.6% detractor rate. This proved that customer churn is driven primarily by breach of promised delivery deadlines rather than absolute shipping duration itself."
+
+**"How did you segment sellers to help the operations team prioritize account management?"**
+> "I built a Strategic 4-Quadrant Matrix segmenting active sellers along two axes: median GMV and a 4.0 CSAT threshold. This isolated the 'Operational Risk' quadrant—high-GMV sellers with poor review scores and high late delivery rates. By focusing operational interventions on this specific quadrant, the marketplace can protect over 25% of platform revenue while preventing thousands of negative reviews."
+
+**"What did the Haversine distance analysis reveal about logistics costs and SLA compliance?"**
+> "It revealed severe regional logistics friction across Brazil. Shipments exceeding 2,000 km experienced three times the delivery duration (21.8 days vs 7.2 days) and nearly four times the late delivery rate (19.5% vs 4.8%) compared to local shipments (0–100 km). This justifies regional fulfillment centers in the North and Northeast to reduce cross-state haul distances."
 
 ---
 
