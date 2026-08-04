@@ -189,7 +189,8 @@ Enterprise-E-Commerce-Control-Tower/
 │   ├── phase4_cleaning_staging.py     ← Cleaning + staging pipeline
 │   ├── phase5_integration_features.py ← Star schema builder + Haversine
 │   ├── phase6_sql_pipeline.py         ← SQLite loader + query executor
-│   └── phase7_exploratory_analysis.py ← EDA figure generator
+│   ├── phase7_exploratory_analysis.py ← EDA figure generator
+│   └── profile_phase2.py             ← Quick Phase 2 inventory profiler
 │
 ├── sql/
 │   └── analytical_queries.sql         ← 50 production-grade SQL queries
@@ -216,8 +217,12 @@ Enterprise-E-Commerce-Control-Tower/
 │   ├── relationship_and_grain_document.md  ← Grain + join risk documentation
 │   └── Ecommerce_Operations_Customer_Experience_PowerBI_Complete_Plan.md ← Master project plan
 │
-└── assets/                            ← Architecture diagrams
+├── assets/                            ← Architecture diagrams (see .gitkeep for guidance)
+│
+└── (data/, staging/, processed/, *.db, *.csv excluded via .gitignore — see below)
 ```
+
+> **⚠️ Note:** Raw CSVs (`data/raw/`), staging files, processed Gold Layer CSVs, and the SQLite database (162 MB) are excluded from Git via `.gitignore`. They are generated locally by running the pipeline scripts above after downloading the source data.
 
 ---
 
@@ -349,6 +354,27 @@ CALCULATE([Delivered Orders],
 ---
 
 ## ⚡ Quickstart & Reproducibility
+
+### 0. Download Raw Data from Kaggle
+
+> **Required first step.** The 9 raw Olist CSV files are excluded from Git (`.gitignore`) due to size. Download them from Kaggle:
+>
+> 📦 [Brazilian E-Commerce Public Dataset by Olist](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
+>
+> Place all 9 CSV files inside `data/raw/` before running any scripts.
+
+```
+data/raw/
+├── olist_orders_dataset.csv
+├── olist_order_items_dataset.csv
+├── olist_customers_dataset.csv
+├── olist_products_dataset.csv
+├── olist_sellers_dataset.csv
+├── olist_order_payments_dataset.csv
+├── olist_order_reviews_dataset.csv
+├── olist_geolocation_dataset.csv
+└── product_category_name_translation.csv
+```
 
 ### 1. Clone & Setup
 
