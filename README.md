@@ -417,11 +417,15 @@ python src/phase7_exploratory_analysis.py
 
 ### 3. Power BI Integration
 
+> 📖 **Full step-by-step manual build guide:** [`docs/power_bi_build_guide.md`](docs/power_bi_build_guide.md)  
+> ⏱️ Estimated time: **2.5–3.5 hours** | The `.pbix` file must be built manually in Power BI Desktop.
+
 1. Open **Power BI Desktop** → **Transform Data** → **Advanced Editor**
 2. Paste code from [`power_bi/power_query_m_code.m`](power_bi/power_query_m_code.m)
 3. Set the `FolderPath` parameter to your local `data/processed/` path
 4. Build star schema relationships per [`docs/power_bi_architecture.md`](docs/power_bi_architecture.md)
 5. Create a `_Measures` table and paste measures from [`power_bi/dax_measures.dax`](power_bi/dax_measures.dax)
+6. Follow [`docs/power_bi_build_guide.md`](docs/power_bi_build_guide.md) for the complete 5-page dashboard build
 
 ---
 
